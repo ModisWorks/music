@@ -1,10 +1,10 @@
 import logging
-
 import discord
 
-from modis import datatools
+from modis import main
+from modis.tools import data
+
 from . import _data, _musicplayer
-from ..._client import client
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +22,14 @@ async def on_message(message):
     channel = message.channel
     content = message.content
 
-    data = datatools.get_data()
-
-    if not data["discord"]["servers"][server.id][_data.modulename]["activated"]:
-        return
+    # TODO port to new activation
+    # if not data.cache["servers"][server.id][_data.modulename]["activated"]:
+    #     return
 
     # Only reply to server messages and don't reply to myself
     if server is not None and author != channel.server.me:
         # Commands section
-        prefix = data["discord"]["servers"][server.id]["prefix"]
+        prefix = data.cache["servers"][server.id]["prefix"]
         if content.startswith(prefix):
             # Parse message
             package = content.split(" ")
@@ -46,10 +45,10 @@ async def on_message(message):
             if command in ['play', 'playnext', 'playnow', 'playshuffle', 'insert',
                            'pause', 'resume', 'skip', 'remove',
                            'rewind', 'restart', 'shuffle', 'volume',
-                           'stop', 'destroy', 'front', 'movehere',
+                           'stop', 'destroy', 'front', 'movehere', 'reconnect', 'movevoice',
                            'settopic', 'cleartopic', 'notopic', 'loop']:
                 try:
-                    await client.delete_message(message)
+                    await main.client.delete_message(message)
                 except discord.errors.NotFound:
                     logger.warning("Could not delete music player command message - NotFound")
                 except discord.errors.Forbidden:
@@ -120,3 +119,6 @@ async def on_message(message):
 
             elif command == 'front' or command == 'movehere':
                 await _data.cache[server.id].movehere(channel)
+
+            elif command == 'reconnect' or command == 'movevoice':
+                await _data.cache[server.id].movevoice(author)
