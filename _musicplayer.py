@@ -595,7 +595,7 @@ class MusicPlayer:
     def write_volume(self):
         """Writes the current volume to the data.json"""
         # Update the volume
-        data.cache["servers"][self.server_id]["music"]["volume"] = self.volume
+        data.cache["servers"][self.server_id]["modules"]["music"]["volume"] = self.volume
         data.write()
 
     async def movehere(self, channel):
