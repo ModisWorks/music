@@ -844,7 +844,9 @@ class MusicPlayer:
             shuffle (bool): Whether to shuffle the added songs
         """
 
-        if query is None or query == "":
+        # Check query exists
+        if not query:
+            self.statuslog.error("No query specified")
             return
 
         self.statuslog.info("Parsing {}".format(query))
@@ -861,13 +863,10 @@ class MusicPlayer:
                 self.statuslog.error("Play index argument must be a number")
                 return
 
-        # parse_thread = threading.Thread(
-        #     target=self.parse_query,
-        #     args=[query, indexnum, stop_current, shuffle])
+        # Parse query on separate thread
         parse_thread = threading.Thread(
-                target=self.parse_query,
-                args=[query, indexnum, stop_current, shuffle])
-        # Run threads
+            target=self.parse_query,
+            args=[query, indexnum, stop_current, shuffle])
         parse_thread.start()
 
     def parse_query(self, query, index, stop_current, shuffle):
@@ -904,7 +903,19 @@ class MusicPlayer:
             if len(self.queue) % 25 == 0:
                 self.update_queue()
 
-        api_music.parse_query(query, self.statuslog, song_found, index, shuffle)
+        queue_list = api_music.parse_query(query, self.statuslog)
+
+        if not queue_list:
+            return
+
+        if shuffle:
+            random.shuffle(queue_list)
+
+        for i in range(0, len(queue_list)):
+            func_index = None
+            if index is not None:
+                func_index = i + index
+            song_found(queue_list[i], func_index)
 
         self.update_queue()
 
