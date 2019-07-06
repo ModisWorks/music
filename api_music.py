@@ -92,9 +92,7 @@ def parse_query(query, parse_logger):
             query_type = query_type.replace('song', 'track')
             parse_logger.info("Queueing SoundCloud {}: {}".format(query_type, query_search))
             soundcloud_tracks = search_sc_tracks(query_type, query_search)
-            queue_list(queue_song, soundcloud_tracks, index, shuffle)
-            parse_logger.info("Queued SoundCloud {}: {}".format(query_type, query_search))
-            return
+            return soundcloud_tracks
         except Exception as e:
             logger.exception(e)
             parse_logger.error("Could not queue from SoundCloud")
@@ -110,8 +108,7 @@ def parse_query(query, parse_logger):
             query_search = ' '.join(args[1:])
             parse_logger.info("Queued Youtube search: {}".format(query_search))
             yt_songs = get_ytvideos(query_search)
-            queue_list(queue_song, yt_songs, index, shuffle)
-            return
+            return yt_songs
         except Exception as e:
             logger.exception(e)
             parse_logger.error("Could not queue YouTube search")
@@ -122,8 +119,8 @@ def parse_query(query, parse_logger):
         parse_logger.info("Queued YouTube search: {}".format(query))
 
         yt_songs = get_ytvideos(query)
-        queue_list(queue_song, yt_songs, index, shuffle)
-        return
+        # queue_list(queue_song, yt_songs, index, shuffle)
+        return yt_songs
 
     # Search fallback failed
     else:

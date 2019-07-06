@@ -77,26 +77,25 @@ class DownloadStreamException(BaseException):
 class MusicPlayer:
     """The music player for the music module"""
 
-    def __init__(self, server_id):
-        """Locks onto a server for easy management of various UIs
+    def __init__(self, guild_id):
+        """Locks onto a guild for easy management of various UIs
 
         Args:
-            server_id (str): The Discord ID of the server to lock on to
+            guild_id (str): The Discord ID of the guild to lock on to
         """
 
         # Player variables
-        self.server_id = server_id
-        self.logger = logging.getLogger("{}.{}".format(__name__, self.server_id))
+        self.guild_id = guild_id
+        self.logger = logging.getLogger("{}.{}".format(__name__, self.guild_id))
         # File variables
-        self.songcache_dir = "{}/{}".format(_root_songcache_dir, self.server_id)
-        self.songcache_next_dir = "{}/{}/next".format(_root_songcache_dir, self.server_id)
+        self.songcache_dir = "{}/{}".format(_root_songcache_dir, self.guild_id)
+        self.songcache_next_dir = "{}/{}/next".format(_root_songcache_dir, self.guild_id)
         self.output_format = "{}/{}".format(self.songcache_dir, file_format)
         self.output_format_next = "{}/{}".format(self.songcache_next_dir, file_format)
 
         # Voice variables
         self.vchannel = None
         self.vclient = None
-        self.streamer = None
         self.current_duration = 0
         self.current_download_elapsed = 0
         self.is_live = False
@@ -121,24 +120,24 @@ class MusicPlayer:
         self.mchannel = None
         self.embed = None
         self.queue_display = 9
-        self.nowplayinglog = logging.getLogger("{}.{}.nowplaying".format(__name__, self.server_id))
+        self.nowplayinglog = logging.getLogger("{}.{}.nowplaying".format(__name__, self.guild_id))
         self.nowplayinglog.setLevel("DEBUG")
-        self.nowplayingauthorlog = logging.getLogger("{}.{}.nowplayingauthor".format(__name__, self.server_id))
+        self.nowplayingauthorlog = logging.getLogger("{}.{}.nowplayingauthor".format(__name__, self.guild_id))
         self.nowplayingauthorlog.setLevel("DEBUG")
-        self.nowplayingsourcelog = logging.getLogger("{}.{}.nowplayingsource".format(__name__, self.server_id))
+        self.nowplayingsourcelog = logging.getLogger("{}.{}.nowplayingsource".format(__name__, self.guild_id))
         self.nowplayingsourcelog.setLevel("DEBUG")
-        self.timelog = logging.getLogger("{}.{}.time".format(__name__, self.server_id))
+        self.timelog = logging.getLogger("{}.{}.time".format(__name__, self.guild_id))
         self.timelog.setLevel("DEBUG")
         self.timelog.propagate = False
-        self.queuelog = logging.getLogger("{}.{}.queue".format(__name__, self.server_id))
+        self.queuelog = logging.getLogger("{}.{}.queue".format(__name__, self.guild_id))
         self.queuelog.setLevel("DEBUG")
         self.queuelog.propagate = False
-        self.queuelenlog = logging.getLogger("{}.{}.queuelen".format(__name__, self.server_id))
+        self.queuelenlog = logging.getLogger("{}.{}.queuelen".format(__name__, self.guild_id))
         self.queuelenlog.setLevel("DEBUG")
         self.queuelenlog.propagate = False
-        self.volumelog = logging.getLogger("{}.{}.volume".format(__name__, self.server_id))
+        self.volumelog = logging.getLogger("{}.{}.volume".format(__name__, self.guild_id))
         self.volumelog.setLevel("DEBUG")
-        self.statuslog = logging.getLogger("{}.{}.status".format(__name__, self.server_id))
+        self.statuslog = logging.getLogger("{}.{}.status".format(__name__, self.guild_id))
         self.statuslog.setLevel("DEBUG")
         self.statustimer = None
 
@@ -149,14 +148,14 @@ class MusicPlayer:
         self.topic = ""
         self.topicchannel = None
         # Set topic channel
-        if "topic_id" in data.cache["servers"][self.server_id]["modules"]["music"]:
-            topic_id = data.cache["servers"][self.server_id]["modules"]["music"]["topic_id"]
+        if "topic_id" in data.cache["guilds"][str(self.guild_id)]["modules"]["music"]:
+            topic_id = data.cache["guilds"][str(self.guild_id)]["modules"]["music"]["topic_id"]
             if topic_id is not None and topic_id != "":
                 logger.debug("Topic channel id: {}".format(topic_id))
                 self.topicchannel = main.client.get_channel(topic_id)
         # Get volume
-        if "volume" in data.cache["servers"][self.server_id]["modules"]["music"]:
-            self.volume = data.cache["servers"][self.server_id]["modules"]["music"]["volume"]
+        if "volume" in data.cache["guilds"][str(self.guild_id)]["modules"]["music"]:
+            self.volume = data.cache["guilds"][str(self.guild_id)]["modules"]["music"]["volume"]
         else:
             self.write_volume()
 
@@ -595,8 +594,8 @@ class MusicPlayer:
     def write_volume(self):
         """Writes the current volume to the data.json"""
         # Update the volume
-        data.cache["servers"][self.server_id]["modules"]["music"]["volume"] = self.volume
-        data.write()
+        data.cache["guilds"][str(self.guild_id)]["modules"]["music"]["volume"] = self.volume
+        data.push()
 
     async def movehere(self, channel):
         """
@@ -652,32 +651,32 @@ class MusicPlayer:
                 self.streamer.stop()
 
     async def set_topic_channel(self, channel):
-        """Set the topic channel for this server"""
-        data.cache["servers"][self.server_id]["modules"]["music"]["topic_id"] = channel.id
+        """Set the topic channel for this guild"""
+        data.cache["guilds"][str(self.guild_id)]["modules"]["music"]["topic_id"] = channel.id
         data.write()
 
         self.topicchannel = channel
         await self.set_topic(self.topic)
 
-        await main.client.send_typing(channel)
+        await channel.trigger_typing()
         embed = ui_embed.topic_update(channel, self.topicchannel)
         await embed.send()
 
     async def clear_topic_channel(self, channel):
-        """Set the topic channel for this server"""
+        """Set the topic channel for this guild"""
         try:
             if self.topicchannel:
-                await main.client.edit_channel(self.topicchannel, topic="")
+                await self.topicchannel.edit(topic="")
         except Exception as e:
             logger.exception(e)
 
         self.topicchannel = None
         logger.debug("Clearing topic channel")
 
-        data.cache["servers"][self.server_id]["modules"]["music"]["topic_id"] = ""
+        data.cache["guilds"][str(self.guild_id)]["modules"]["music"]["topic_id"] = ""
         data.write()
 
-        await main.client.send_typing(channel)
+        await channel.trigger_typing()
         embed = ui_embed.topic_update(channel, self.topicchannel)
         await embed.send()
 
@@ -700,11 +699,11 @@ class MusicPlayer:
         self.logger.debug("Setting up voice")
 
         # Create voice client
-        self.vchannel = author.voice.voice_channel
+        self.vchannel = author.voice.channel
         if self.vchannel:
             self.statuslog.info("Connecting to voice")
             try:
-                self.vclient = await main.client.join_voice_channel(self.vchannel)
+                self.vclient = await self.vchannel.connect()
             except discord.ClientException as e:
                 logger.exception(e)
                 self.statuslog.warning("I'm already connected to a voice channel.")
@@ -746,7 +745,7 @@ class MusicPlayer:
         self.logger.debug("Setting up gui")
 
         # Create gui
-        await main.client.send_typing(text_channel)
+        await text_channel.trigger_typing()
         self.mchannel = text_channel
         self.new_embed_ui()
         await self.embed.send()
@@ -826,7 +825,7 @@ class MusicPlayer:
         for e in ("⏯", "⏮", "⏹", "⏭", "🔀", "🔉", "🔊"):
             try:
                 if self.embed is not None:
-                    await main.client.add_reaction(self.embed.sent_embed, e)
+                    await self.embed.sent_embed.add_reaction(e)
             except discord.DiscordException as e:
                 logger.exception(e)
                 self.statuslog.error("I couldn't add the buttons. Check my permissions.")
@@ -891,13 +890,13 @@ class MusicPlayer:
             self._url_insert(song, insert_index)
 
             # Start playing if nothing is
-            if self.streamer is None:
+            if not self.vclient.is_playing():
                 if self.state == "ready":
                     logger.info("Starting music")
                     self.vplay_ts()
             elif stop_current:
-                if self.streamer:
-                    self.streamer.stop()
+                if self.vclient.is_playing():
+                    self.vclient.stop()
 
             # Update the queue every 25 songs
             if len(self.queue) % 25 == 0:
@@ -958,7 +957,7 @@ class MusicPlayer:
         self.topic = topic
         try:
             if self.topicchannel:
-                await main.client.edit_channel(self.topicchannel, topic=topic)
+                await self.topicchannel.edit(topic=topic)
         except Exception as e:
             logger.exception(e)
 
@@ -1146,7 +1145,7 @@ class MusicPlayer:
         """Creates a streamer that plays from a file"""
         self.current_download_elapsed = 0
 
-        self.streamer = self.vclient.create_ffmpeg_player(filepath, after=self.vafter_ts)
+        self.vclient.play(discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(filepath)), after=self.vafter_ts)
         await self.setup_streamer()
 
         try:
@@ -1200,8 +1199,7 @@ class MusicPlayer:
 
     async def setup_streamer(self):
         """Sets up basic defaults for the streamer"""
-        self.streamer.volume = self.volume / 100
-        self.streamer.start()
+        self.vclient.source.volume = self.volume / 100
 
         self.state = "ready"
 

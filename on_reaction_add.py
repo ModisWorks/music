@@ -14,27 +14,27 @@ async def on_reaction_add(reaction, user):
     """
 
     # Simplify reaction info
-    server = reaction.message.server
+    guild = reaction.message.guild
     emoji = reaction.emoji
 
     # TODO port to new activation
-    # if not data.cache["servers"][server.id][_data.modulename]["activated"]:
+    # if not data.cache["guilds"][guild.id][_data.modulename]["activated"]:
     #     return
 
     # Commands section
-    if user != reaction.message.channel.server.me:
-        if server.id not in _data.cache or _data.cache[server.id].state == 'destroyed':
+    if user != main.client.user:
+        if guild.id not in _data.cache or _data.cache[guild.id].state == 'destroyed':
             return
 
         try:
-            valid_reaction = reaction.message.id == _data.cache[server.id].embed.sent_embed.id
+            valid_reaction = reaction.message.id == _data.cache[guild.id].embed.sent_embed.id
         except AttributeError:
             pass
         else:
             if valid_reaction:
                 # Remove reaction
                 try:
-                    await main.client.remove_reaction(reaction.message, emoji, user)
+                    await reaction.message.remove_reaction(emoji, user)
                 except discord.errors.NotFound:
                     pass
                 except discord.errors.Forbidden:
@@ -42,16 +42,16 @@ async def on_reaction_add(reaction, user):
 
                 # Commands
                 if emoji == "⏯":
-                    await _data.cache[server.id].toggle()
+                    await _data.cache[guild.id].toggle()
                 if emoji == "⏹":
-                    await _data.cache[server.id].stop()
+                    await _data.cache[guild.id].stop()
                 if emoji == "⏭":
-                    await _data.cache[server.id].skip("1")
+                    await _data.cache[guild.id].skip("1")
                 if emoji == "⏮":
-                    await _data.cache[server.id].rewind("1")
+                    await _data.cache[guild.id].rewind("1")
                 if emoji == "🔀":
-                    await _data.cache[server.id].shuffle()
+                    await _data.cache[guild.id].shuffle()
                 if emoji == "🔉":
-                    await _data.cache[server.id].setvolume('-')
+                    await _data.cache[guild.id].setvolume('-')
                 if emoji == "🔊":
-                    await _data.cache[server.id].setvolume('+')
+                    await _data.cache[guild.id].setvolume('+')

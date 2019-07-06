@@ -70,7 +70,7 @@ COMMANDS = {
         "level": 0
     },
 }
-DATA_SERVER = {
+DATA_GUILD = {
     "topic_id": "",
     "volume": 20
 }
