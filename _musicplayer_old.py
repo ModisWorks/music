@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import shutil
 import threading
 
 import discord
@@ -18,6 +19,27 @@ from . import _data, _timebar, api_music, ui_embed
 
 logger = logging.getLogger(__name__)
 
+_dir = os.getcwd()
+_root_songcache_dir = "{}/.songcache".format(_dir)
+
+
+def clear_cache_root():
+    """Clears everything in the song cache"""
+    logger.debug("Clearing root cache")
+    if os.path.isdir(_root_songcache_dir):
+        for filename in os.listdir(_root_songcache_dir):
+            file_path = os.path.join(_root_songcache_dir, filename)
+            try:
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except PermissionError:
+                pass
+            except Exception as e:
+                logger.exception(e)
+    logger.debug("Root cache cleared")
+
 
 def _match_func(info_dict):
     if "is_live" not in info_dict or not info_dict["is_live"]:
@@ -25,6 +47,8 @@ def _match_func(info_dict):
             return None
     raise DownloadStreamException("Cannot download stream")
 
+
+file_format = "%(title)s"
 
 ytdl_formats = [
     # "bestaudio[filesize<20M]",
@@ -53,20 +77,25 @@ class DownloadStreamException(BaseException):
 class MusicPlayer:
     """The music player for the music module"""
 
-    def __init__(self, guild_id: int):
+    def __init__(self, guild_id):
         """Locks onto a guild for easy management of various UIs
 
         Args:
-            guild_id (int): The Discord ID of the guild to lock on to
+            guild_id (str): The Discord ID of the guild to lock on to
         """
 
         # Player variables
         self.guild_id = guild_id
         self.logger = logging.getLogger("{}.{}".format(__name__, self.guild_id))
+        # File variables
+        self.songcache_dir = "{}/{}".format(_root_songcache_dir, self.guild_id)
+        self.songcache_next_dir = "{}/{}/next".format(_root_songcache_dir, self.guild_id)
+        self.output_format = "{}/{}".format(self.songcache_dir, file_format)
+        self.output_format_next = "{}/{}".format(self.songcache_next_dir, file_format)
 
         # Voice variables
-        self.voice_channel: discord.VoiceChannel = None
-        self.voice_client: discord.VoiceClient = None
+        self.vchannel: discord.VoiceChannel = None
+        self.vclient: discord.VoiceClient = None
         self.current_duration: int = 0
         self.current_download_elapsed: int = 0
         self.is_live: bool = False
@@ -83,8 +112,8 @@ class MusicPlayer:
         self.loop_type = 'off'
 
         # Status variables
-        self.ready_text = False
-        self.ready_voice = False
+        self.mready = False
+        self.vready = False
         self.state = 'off'
 
         # Gui variables
@@ -112,66 +141,61 @@ class MusicPlayer:
         self.statuslog.setLevel("DEBUG")
         self.statustimer = None
 
+        # Clear the cache
+        self.clear_cache()
+
         # Get channel topic
         self.topic = ""
         self.topicchannel = None
         # Set topic channel
-        if "topic_id" in data.get(str(self.guild_id), "music"):
-            topic_id = data.get(str(self.guild_id), "music", ["topic_id"])
+        if "topic_id" in data.cache["guilds"][str(self.guild_id)]["modules"]["music"]:
+            topic_id = data.cache["guilds"][str(self.guild_id)]["modules"]["music"]["topic_id"]
             if topic_id is not None and topic_id != "":
                 logger.debug("Topic channel id: {}".format(topic_id))
                 self.topicchannel = main.client.get_channel(topic_id)
         # Get volume
-        if "volume" in data.get(str(self.guild_id), "music"):
-            self.volume = data.get(str(self.guild_id), "music", ["volume"])
+        if "volume" in data.cache["guilds"][str(self.guild_id)]["modules"]["music"]:
+            self.volume = data.cache["guilds"][str(self.guild_id)]["modules"]["music"]["volume"]
         else:
             self.write_volume()
 
     async def play(self,
-                   voice_channel: discord.VoiceChannel,
+                   author: discord.Member,
                    text_channel: discord.TextChannel,
                    query: str,
-                   index: int = 0,
+                   index: str = None,
                    stop_current: bool = False,
                    shuffle: bool = False):
-        """The play command.
+        """
+        The play command
 
         Args:
-            voice_channel (discord.VoiceChannel): The member that called the command.
-            text_channel (discord.TextChannel): The channel where the command was called.
-            query (str): The query that was passed with the command.
-            index (int): Whether to play the query next, or at the end of the queue.
+            author (discord.Member): The member that called the command
+            text_channel (discord.Channel): The channel where the command was called
+            query (str): The argument that was passed with the command
+            index (str): Whether to play next or at the end of the queue
             stop_current (bool): Whether to stop the currently playing song
             shuffle (bool): Whether to shuffle the queue after starting
         """
 
         if self.state == 'off':
             self.state = 'starting'
-
-            # Clear
             self.prev_queue = []
             await self.set_topic("")
-
-            # Connect to text channel
-            await self.text_setup(text_channel)
-
-            # Connect to voice channel
-            await self.voice_setup(voice_channel)
+            # Init the music player
+            await self.msetup(text_channel)
+            # Connect to voice
+            await self.vsetup(author)
 
             # Mark as 'ready' if everything is ok
-            self.state = 'ready' if self.ready_text and self.ready_voice else 'off'
+            self.state = 'ready' if self.mready and self.vready else 'off'
 
         if self.state == 'ready':
             # Queue the song
             await self.enqueue(query, index, stop_current, shuffle)
 
-    async def stop(self,
-                   log_stop: bool = False):
-        """The stop command.
-
-        Args:
-            log_stop (bool): Whether to also send stopping notice to GUI.
-        """
+    async def stop(self, log_stop=False):
+        """The stop command"""
 
         self.logger.debug("stop command")
         self.state = 'stopping'
@@ -186,20 +210,25 @@ class MusicPlayer:
         if log_stop:
             self.statuslog.debug("Stopping")
 
-        self.ready_voice = False
+        self.vready = False
         self.pause_time = None
         self.loop_type = 'off'
 
-        if self.voice_client:
+        if self.vclient:
             try:
-                await self.voice_client.disconnect()
-            except NameError:
+                await self.vclient.disconnect()
+            except Exception as e:
+                logger.error(e)
                 pass
+
+        if self.vclient.is_playing():
+            try:
+                self.vclient.stop()
             except discord.ClientException:
                 pass
 
-        self.voice_client = None
-        self.voice_channel = None
+        self.vclient = None
+        self.vchannel = None
         self.current_duration = 0
         self.current_download_elapsed = 0
         self.is_live = False
@@ -238,26 +267,26 @@ class MusicPlayer:
         self.prev_time = "---"
         self.statuslog.debug("Destroying")
 
-        self.ready_text = False
-        self.ready_voice = False
+        self.mready = False
+        self.vready = False
         self.pause_time = None
         self.loop_type = 'off'
 
-        if self.voice_client:
+        if self.vclient:
             try:
-                await self.voice_client.disconnect()
+                await self.vclient.disconnect()
             except Exception as e:
                 logger.error(e)
                 pass
 
-        if self.voice_client.is_playing():
+        if self.vclient.is_playing():
             try:
-                self.voice_client.stop()
+                self.vclient.stop()
             except discord.ClientException:
                 pass
 
-        self.voice_client = None
-        self.voice_channel = None
+        self.vclient = None
+        self.vchannel = None
         self.current_duration = 0
         self.current_download_elapsed = 0
         self.is_live = False
@@ -278,11 +307,11 @@ class MusicPlayer:
         if not self.state == 'ready':
             return
 
-        if not self.voice_client.is_connected():
+        if not self.vclient.is_connected():
             return
 
         try:
-            if self.voice_client.is_playing():
+            if self.vclient.is_playing():
                 await self.pause()
             else:
                 await self.resume()
@@ -298,13 +327,13 @@ class MusicPlayer:
         if not self.state == 'ready':
             return
 
-        if not self.voice_client.is_connected():
+        if not self.vclient.is_connected():
             return
 
         try:
-            if self.voice_client.is_playing():
-                self.voice_client.pause()
-                self.pause_time = self.voice_client.loop.time()
+            if self.vclient.is_playing():
+                self.vclient.pause()
+                self.pause_time = self.vclient.loop.time()
                 self.statuslog.info("Paused")
         except Exception as e:
             logger.error(e)
@@ -318,17 +347,17 @@ class MusicPlayer:
         if not self.state == 'ready':
             return
 
-        if not self.voice_client.is_connected():
+        if not self.vclient.is_connected():
             return
 
         try:
-            if not self.voice_client.is_playing():
+            if not self.vclient.is_playing():
                 play_state = "Streaming" if self.is_live else "Playing"
                 self.statuslog.info(play_state)
-                self.voice_client.resume()
+                self.vclient.resume()
 
                 if self.pause_time is not None:
-                    self.vclient_starttime += (self.voice_client.loop.time() - self.pause_time)
+                    self.vclient_starttime += (self.vclient.loop.time() - self.pause_time)
                 self.pause_time = None
         except Exception as e:
             logger.error(e)
@@ -364,7 +393,7 @@ class MusicPlayer:
                     self.prev_queue.append(self.queue.pop(0))
 
             try:
-                self.voice_client.stop()
+                self.vclient.stop()
             except Exception as e:
                 logger.exception(e)
 
@@ -476,7 +505,7 @@ class MusicPlayer:
                     self.queue.insert(0, self.prev_queue.pop())
 
             try:
-                self.voice_client.stop()
+                self.vclient.stop()
             except Exception as e:
                 logger.exception(e)
 
@@ -529,7 +558,7 @@ class MusicPlayer:
                 self.volume = (10 * (self.volume // 10)) + 10
                 self.volumelog.info(str(self.volume))
                 try:
-                    self.voice_client.volume = self.volume / 100
+                    self.vclient.volume = self.volume / 100
                 except AttributeError:
                     pass
             else:
@@ -541,7 +570,7 @@ class MusicPlayer:
                 self.volume = (10 * ((self.volume + 9) // 10)) - 10
                 self.volumelog.info(str(self.volume))
                 try:
-                    self.voice_client.volume = self.volume / 100
+                    self.vclient.volume = self.volume / 100
                 except AttributeError:
                     pass
             else:
@@ -558,7 +587,7 @@ class MusicPlayer:
                     self.volume = value
                     self.volumelog.info(str(self.volume))
                     try:
-                        self.voice_client.volume = self.volume / 100
+                        self.vclient.volume = self.volume / 100
                     except AttributeError:
                         pass
                 else:
@@ -569,7 +598,8 @@ class MusicPlayer:
     def write_volume(self):
         """Writes the current volume to the data.json"""
         # Update the volume
-        data.edit(str(self.guild_id), "music", self.volume, ["volume"])
+        data.cache["guilds"][str(self.guild_id)]["modules"]["music"]["volume"] = self.volume
+        data.push()
 
     async def movehere(self, channel):
         """
@@ -592,13 +622,12 @@ class MusicPlayer:
 
         self.statuslog.info("Moved to front")
 
-    async def movevoice(self,
-                        voice_channel: discord.VoiceChannel):
+    async def movevoice(self, author):
         """
         Moves the voice client to a new channel, based on the author's channel
 
         Args:
-            voice_channel (discord.VoiceChannel): The member to move to
+            author (discord.Member): The member to move to
         """
 
         if self.state != "ready":
@@ -608,22 +637,22 @@ class MusicPlayer:
         self.logger.debug("movevoice command")
 
         # Disconnect
-        if self.voice_client:
+        if self.vclient:
             try:
-                await self.voice_client.disconnect()
+                await self.vclient.disconnect()
             except Exception as e:
                 logger.exception(e)
 
         # Reconnect
-        self.ready_voice = False
+        self.vready = False
         self.state = 'starting'
-        await self.voice_setup(voice_channel)
-        if self.ready_voice:
+        await self.vsetup(author)
+        if self.vready:
             self.state = 'ready'
             self.statuslog.info("Moved to new channel")
 
-            if self.voice_client:
-                self.voice_client.stop()
+            if self.vclient:
+                self.vclient.stop()
 
     async def set_topic_channel(self, channel):
         """Set the topic channel for this guild"""
@@ -654,14 +683,14 @@ class MusicPlayer:
         await embed.send()
 
     # Methods
-    async def voice_setup(self, voice_channel: discord.VoiceChannel):
+    async def vsetup(self, author):
         """Creates the voice client
 
         Args:
-            voice_channel (discord.VoiceChannel): The user that the voice ui will seek
+            author (discord.Member): The user that the voice ui will seek
         """
 
-        if self.ready_voice:
+        if self.vready:
             logger.warning("Attempt to init voice when already initialised")
             return
 
@@ -672,11 +701,11 @@ class MusicPlayer:
         self.logger.debug("Setting up voice")
 
         # Create voice client
-        self.voice_channel = voice_channel
-        if self.voice_channel:
+        self.vchannel = author.voice.channel
+        if self.vchannel:
             self.statuslog.info("Connecting to voice")
             try:
-                self.voice_client = await self.voice_channel.connect()
+                self.vclient = await self.vchannel.connect()
             except discord.ClientException as e:
                 logger.exception(e)
                 self.statuslog.warning("I'm already connected to a voice channel.")
@@ -698,16 +727,16 @@ class MusicPlayer:
             self.statuslog.error("You're not connected to a voice channel.")
             return
 
-        self.ready_voice = True
+        self.vready = True
 
-    async def text_setup(self, text_channel):
+    async def msetup(self, text_channel):
         """Creates the gui
 
         Args:
             text_channel (discord.Channel): The channel for the embed ui to run in
         """
 
-        if self.ready_text:
+        if self.mready:
             logger.warning("Attempt to init music when already initialised")
             return
 
@@ -725,7 +754,7 @@ class MusicPlayer:
         await self.embed.usend()
         await self.add_reactions()
 
-        self.ready_text = True
+        self.mready = True
 
     def new_embed_ui(self):
         """Create the embed UI object and save it to self"""
@@ -811,7 +840,7 @@ class MusicPlayer:
 
         Args:
             query (str): Either a search term or a link
-            queue_index (int): The queue index to enqueue at (0 for end)
+            queue_index (str): The queue index to enqueue at (None for end)
             stop_current (bool): Whether to stop the current song after the songs are queued
             shuffle (bool): Whether to shuffle the added songs
         """
@@ -863,13 +892,13 @@ class MusicPlayer:
             self._url_insert(song, insert_index)
 
             # Start playing if nothing is
-            if not self.voice_client.is_playing():
+            if not self.vclient.is_playing():
                 if self.state == "ready":
                     logger.info("Starting music")
                     self.vplay_ts()
             elif stop_current:
-                if self.voice_client.is_playing():
-                    self.voice_client.stop()
+                if self.vclient.is_playing():
+                    self.vclient.stop()
 
             # Update the queue every 25 songs
             if len(self.queue) % 25 == 0:
@@ -938,8 +967,8 @@ class MusicPlayer:
     def time_loop(self):
         while True:
             if self.pause_time is None:
-                if self.voice_client is not None and self.vclient_starttime is not None:
-                    diff = self.voice_client.loop.time() - self.vclient_starttime
+                if self.vclient is not None and self.vclient_starttime is not None:
+                    diff = self.vclient.loop.time() - self.vclient_starttime
 
                     if self.is_live:
                         time_bar = "Livestream"
@@ -1049,11 +1078,11 @@ class MusicPlayer:
 
     def play_empty(self):
         """Play blank audio to let Discord know we're still here"""
-        if self.voice_client:
+        if self.vclient:
             try:
-                if self.voice_client:
-                    self.voice_client.volume = 0
-                self.voice_client.play(discord.PCMAudio("\n".encode()))
+                if self.vclient:
+                    self.vclient.volume = 0
+                self.vclient.play(discord.PCMAudio("\n".encode()))
             except discord.ClientException:
                 pass
 
@@ -1118,7 +1147,7 @@ class MusicPlayer:
         """Creates a streamer that plays from a file"""
         self.current_download_elapsed = 0
 
-        self.voice_client.play(discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(filepath)), after=self.vafter_ts)
+        self.vclient.play(discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(filepath)), after=self.vafter_ts)
         await self.setup_streamer()
 
         try:
@@ -1153,7 +1182,7 @@ class MusicPlayer:
         """Creates a streamer that plays from a URL"""
         self.current_download_elapsed = 0
 
-        self.streamer = await self.voice_client.create_ytdl_player(url, ytdl_options=opts, after=self.vafter_ts)
+        self.streamer = await self.vclient.create_ytdl_player(url, ytdl_options=opts, after=self.vafter_ts)
         await self.setup_streamer()
 
         self.nowplayinglog.debug(self.streamer.title)
@@ -1172,12 +1201,12 @@ class MusicPlayer:
 
     async def setup_streamer(self):
         """Sets up basic defaults for the streamer"""
-        self.voice_client.source.volume = self.volume / 100
+        self.vclient.source.volume = self.volume / 100
 
         self.state = "ready"
 
         self.pause_time = None
-        self.vclient_starttime = self.voice_client.loop.time()
+        self.vclient_starttime = self.vclient.loop.time()
 
         # Cache next song
         self.logger.debug("Caching next song")

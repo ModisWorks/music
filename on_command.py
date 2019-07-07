@@ -31,11 +31,12 @@ async def on_command(root, aux, query, msgobj):
         shuffle = "shuffle" in aux
 
         if now or next:
-            await _data.cache[guild.id].play(author, channel, query, index=1, stop_current=now, shuffle=shuffle)
+            await _data.cache[guild.id].play(author.voice.channel, channel, query, index=1, stop_current=now, shuffle=shuffle)
         else:
-            await _data.cache[guild.id].play(author, channel, query, shuffle=shuffle)
+            await _data.cache[guild.id].play(author.voice.channel, channel, query, shuffle=shuffle)
     if root == 'insert':
-        await _data.cache[guild.id].play(author, channel, query, index=query)
+        # TODO index int check
+        await _data.cache[guild.id].play(author.voice.channel, channel, query, index=int(query))
     elif root == 'pause':
         await _data.cache[guild.id].pause()
     elif root == 'resume':
@@ -83,4 +84,4 @@ async def on_command(root, aux, query, msgobj):
     elif root == 'front' or root == 'movehere':
         await _data.cache[guild.id].movehere(channel)
     elif root == 'reconnect' or root == 'movevoice':
-        await _data.cache[guild.id].movevoice(author)
+        await _data.cache[guild.id].movevoice(author.voice.channel)
