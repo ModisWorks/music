@@ -14,10 +14,6 @@ async def on_command(root, aux, query, msgobj):
     channel = msgobj.channel
     content = msgobj.content
 
-    # Lock on to guild if not yet locked
-    if guild.id not in _data.cache or _data.cache[guild.id].state == 'destroyed':
-        _data.cache[guild.id] = _musicplayer.MusicPlayer(guild.id)
-
     # Remove message
     try:
         await msgobj.delete()

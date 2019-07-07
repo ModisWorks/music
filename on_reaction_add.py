@@ -17,10 +17,6 @@ async def on_reaction_add(reaction, user):
     guild = reaction.message.guild
     emoji = reaction.emoji
 
-    # TODO port to new activation
-    # if not data.cache["guilds"][guild.id][_data.modulename]["activated"]:
-    #     return
-
     # Commands section
     if user != main.client.user:
         if guild.id not in _data.cache or _data.cache[guild.id].state == 'destroyed':
