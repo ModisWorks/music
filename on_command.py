@@ -22,7 +22,9 @@ async def on_command(root, aux, query, msgobj):
     except discord.errors.Forbidden:
         logger.warning("Could not delete music player command message - Forbidden")
 
-    logger.info("Root: {}, Aux: {}, Query: {}".format(root, aux, query))
+    # Lock on to guild if not yet locked
+    if guild.id not in _data.cache or _data.cache[guild.id].state == 'destroyed':
+        _data.cache[guild.id] = _musicplayer.MusicPlayer(guild.id)
 
     # Commands
     if root == 'play':

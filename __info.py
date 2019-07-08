@@ -71,7 +71,7 @@ COMMANDS = {
     },
 }
 DATA_GUILD = {
-    "topic_id": "",
+    "topic_channel_id": 0,
     "volume": 20
 }
 DATA_GLOBAL = {}

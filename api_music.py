@@ -16,7 +16,7 @@ SOURCE_TO_NAME = {
 
 
 # Main parser
-def parse_query(query, parse_logger):
+def parse_query(query, parse_logger) -> list:
     """Gets a list of media from a query, parsing links and search queries and playlists.
 
     Args:
@@ -28,7 +28,7 @@ def parse_query(query, parse_logger):
     args = query.split(' ')
     if len(args) == 0:
         parse_logger.error("No query given")
-        return
+        return []
 
     # Check whether query is a URL
     parsed_url = urlparse(query)
@@ -52,7 +52,7 @@ def parse_query(query, parse_logger):
     if parsed_uri[0].lower() == "spotify":
         if api.client_spotify is None:
             parse_logger.error("Host does not support Spotify")
-            return
+            return []
 
         try:
             if len(parsed_uri) > 2 and parsed_uri[1] in ["album", "artist", "track", "user"]:
@@ -60,7 +60,7 @@ def parse_query(query, parse_logger):
                 query_search = ' '.join(parsed_uri[2:])
             else:
                 parse_logger.error("Error malformed Spotify URI/URL")
-                return
+                return []
 
             query_type = query_type.replace('user', 'playlist')
             spotify_tracks = get_sp_results(query_type, query_search)
@@ -68,18 +68,18 @@ def parse_query(query, parse_logger):
 
             get_ytvideos_from_list(spotify_tracks)
             parse_logger.info("Queued Spotify {} URI: {}".format(query_type, query_search))
-            return
+            return []
     # This sends the track name and artist found with the spotifyAPI to youtube
         except Exception as e:
             logger.exception(e)
             parse_logger.error("Error queueing from Spotify")
-            return
+            return []
 
     # Check whether SoundCloud specified in aux
     elif args[0].lower() in ["sc", "soundcloud"]:
         if api.client_soundcloud is None:
             parse_logger.error("Host does not support SoundCloud")
-            return
+            return []
 
         try:
             requests = ['song', 'songs', 'track', 'tracks', 'user', 'playlist', 'tagged', 'genre']
@@ -96,13 +96,13 @@ def parse_query(query, parse_logger):
         except Exception as e:
             logger.exception(e)
             parse_logger.error("Could not queue from SoundCloud")
-            return
+            return []
 
     # Check whether YouTube specified in aux
     elif args[0].lower() in ["yt", "youtube"] and api.client_youtube is not None:
         if api.client_youtube is None:
             parse_logger.error("Host does not support YouTube")
-            return
+            return []
 
         try:
             query_search = ' '.join(args[1:])
@@ -112,7 +112,7 @@ def parse_query(query, parse_logger):
         except Exception as e:
             logger.exception(e)
             parse_logger.error("Could not queue YouTube search")
-            return
+            return []
 
     # Search fallback
     elif api.client_youtube is not None:
@@ -125,7 +125,7 @@ def parse_query(query, parse_logger):
     # Search fallback failed
     else:
         parse_logger.error("Host does not support YouTube".format(query))
-        return
+        return []
 
 
 def queue_list(song_func, songs, index, shuffle):
