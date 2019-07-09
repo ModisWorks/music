@@ -48,6 +48,6 @@ async def on_reaction_add(reaction, user):
                 if emoji == "🔀":
                     await _data.cache[guild.id].shuffle()
                 if emoji == "🔉":
-                    await _data.cache[guild.id].setvolume('-')
+                    await _data.cache[guild.id].volume('-')
                 if emoji == "🔊":
-                    await _data.cache[guild.id].setvolume('+')
+                    await _data.cache[guild.id].volume('+')

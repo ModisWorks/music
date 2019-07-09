@@ -222,7 +222,7 @@ class MusicPlayer:
             return
 
         self.voice_client.resume()
-        self.ui_loggers["info"].info("Resumed")
+        self.ui_loggers["status"].info("Resumed")
 
     async def toggle(self) -> None:
         """Toggles between pause and resume."""
@@ -258,17 +258,292 @@ class MusicPlayer:
         except TypeError or ValueError:
             self.ui_loggers["status"].error("Skip amount must be a positive integer or \"all\"")
             return
+        # TODO move to on_command.py
 
         self.ui_loggers["status"].info("Skipping")
 
         for i in range(num - 1):
             if len(self.queue) > 0:
                 self.history.append(self.queue.pop(0))
+        self.update_queue()
 
         try:
             self.voice_client.stop()
-        except discord.ClientException:
+        except discord.ClientException or AttributeError:
             pass
+
+    async def remove(self,
+                     index: str = "0") -> None:
+        """Removes a song or songs from the queue.
+
+        Args:
+            index (int): The index to remove, can be either a number, a range in the form '##-##', or "all".
+        """
+
+        if not self.state == "ready":
+            return
+
+        if not index:
+            self.ui_loggers["status"].error("You need to provide an index or range to remove")
+            return
+
+        if index == "all":
+            self.queue = []
+            self.update_queue()
+            self.ui_loggers["status"].info("Removed all songs")
+            return
+
+        indexes = index.split("-")
+        try:
+            if len(indexes) == 1:
+                num_lower = int(indexes[0]) - 1
+                num_upper = num_lower + 1
+            elif len(indexes) == 2:
+                num_lower = int(indexes[0]) - 1
+                num_upper = int(indexes[1])
+            else:
+                self.ui_loggers["status"].error("Cannot have more than 2 indexes for remove range")
+                return
+        except TypeError or ValueError:
+            self.ui_loggers["status"].error("Remove indexes must be positive integers or \"all\"")
+            return
+
+        if num_lower < 0 or num_lower >= len(self.queue) or num_upper > len(self.queue):
+            if len(self.queue) == 0:
+                self.ui_loggers["status"].warning("No songs in queue")
+            elif len(self.queue) == 1:
+                self.ui_loggers["status"].error("Remove index must be 1 (only 1 song in queue)")
+            else:
+                self.ui_loggers["status"].error("Remove index must be between 1 and {}".format(len(self.queue)))
+            return
+
+        if num_upper <= num_lower:
+            self.ui_loggers["status"].error("Second index in range must be greater than first")
+            return
+
+        lower_songname = self.queue[num_lower][1]
+        for num in range(0, num_upper - num_lower):
+            self.logger.debug("Removed {}".format(self.queue[num_lower][1]))
+            self.queue.pop(num_lower)
+
+        if len(indexes) == 1:
+            self.ui_loggers["status"].info("Removed {}".format(lower_songname))
+        else:
+            self.ui_loggers["status"].info("Removed songs {}-{}".format(num_lower + 1, num_upper))
+
+        self.update_queue()
+
+    async def rewind(self,
+                     amount: str = "1") -> None:
+        """Rewinds a specified number of songs
+
+        Args:
+            amount (str): The number of items to rewind
+        """
+
+        if not self.state == "ready":
+            return
+
+        if amount == "":
+            amount = "1"
+
+        try:
+            num = int(amount)
+        except TypeError or ValueError:
+            self.ui_loggers["status"].error("Rewind argument must be a positive integer")
+            return
+
+        if len(self.history) == 0:
+            self.ui_loggers["status"].error("No songs to rewind")
+            return
+
+        if num < 0:
+            self.ui_loggers["status"].error("Rewind must be postitive or 0")
+            return
+        elif num > len(self.history):
+            self.ui_loggers["status"].warning("Rewinding to start")
+        else:
+            self.ui_loggers["status"].info("Rewinding")
+
+        for i in range(num + 1):
+            if len(self.history) > 0:
+                self.queue.insert(0, self.history.pop())
+
+        try:
+            self.voice_client.stop()
+        except discord.ClientException or AttributeError:
+            pass
+
+    async def shuffle(self) -> None:
+        """Shuffles the queue."""
+
+        if not self.state == "ready":
+            return
+
+        self.ui_loggers["status"].debug("Shuffling")
+
+        random.shuffle(self.queue)
+        self.update_queue()
+        self.ui_loggers["status"].debug("Shuffled")
+
+    async def loop(self,
+                   loop_type: str = "on") -> None:
+        """Changes the loop behaviour.
+
+        Args:
+            loop_type (str): The type of loop behaviour, can be "off", "on", or "shuffle".
+        """
+
+        if loop_type not in ["on", "off", "shuffle"]:
+            self.ui_loggers["status"].error("Loop value must be `off`, `on`, or `shuffle`")
+            return
+
+        self.loop = loop_type
+        if self.loop == 'on':
+            self.ui_loggers["status"].info("Looping on")
+        elif self.loop == 'off':
+            self.ui_loggers["status"].info("Looping off")
+        elif self.loop == 'shuffle':
+            self.ui_loggers["status"].info("Looping on and shuffling")
+
+    async def volume(self,
+                     value: str = "10") -> None:
+        """Changes the volume of the music player.
+
+        Args:
+            value (str): The volume to change to, can be an integer from 0 to 100, or + or -.
+        """
+
+        if self.state != "ready":
+            return
+
+        if value == '+':
+            if self.volume < 100:
+                self.ui_loggers["status"].debug("Volume up")
+                self.volume = (10 * (self.volume // 10)) + 10
+                self.ui_loggers["volume"].info(str(self.volume))
+                try:
+                    self.voice_client.volume = self.volume / 100
+                except AttributeError:
+                    pass
+            else:
+                self.ui_loggers["status"].warning("Already at maximum volume")
+
+        elif value == '-':
+            if self.volume > 0:
+                self.ui_loggers["status"].debug("Volume down")
+                self.volume = (10 * ((self.volume + 9) // 10)) - 10
+                self.ui_loggers["volume"].info(str(self.volume))
+                try:
+                    self.voice_client.volume = self.volume / 100
+                except AttributeError:
+                    pass
+            else:
+                self.ui_loggers["status"].warning("Already at minimum volume")
+
+        else:
+            try:
+                value = int(value)
+            except ValueError:
+                self.ui_loggers["status"].error("Volume argument must be +, -, or a %")
+            else:
+                if 0 <= value <= 200:
+                    self.ui_loggers["status"].debug("Setting volume")
+                    self.volume = value
+                    self.ui_loggers["volume"].info(str(self.volume))
+                    try:
+                        self.voice_client.volume = self.volume / 100
+                    except AttributeError:
+                        pass
+                else:
+                    self.ui_loggers["status"].error("Volume must be between 0 and 200")
+
+        self.push_volume()
+
+    async def movehere(self,
+                       channel: discord.TextChannel) -> None:
+        """Moves the embed message to a new channel; can also be used to move the musicplayer to the front.
+
+        Args:
+            channel (discord.TextChannel): The channel to move to.
+        """
+
+        await self.embed.delete()
+
+        self.embed.channel = channel
+        await self.embed.send()
+        asyncio.ensure_future(self.add_reactions())
+
+        self.ui_loggers["status"].info("Moved to front")
+
+    async def movevoice(self,
+                        voice_channel: discord.VoiceChannel) -> None:
+        """Moves the voice client to a new channel.
+
+        Args:
+            voice_channel (discord.VoiceChannel): The channel to move to.
+        """
+
+        if self.state != "ready":
+            return
+
+        # Disconnect
+        if self.voice_client:
+            try:
+                await self.voice_client.disconnect()
+            except Exception as e:
+                logger.exception(e)
+
+        # Reconnect
+        self.ready_voice = False
+        self.state = 'starting'
+        await self.voice_setup(voice_channel)
+        if self.ready_voice:
+            self.state = 'ready'
+            self.ui_loggers["status"].info("Moved to new channel")
+
+            if self.voice_client:
+                self.voice_client.stop()
+
+    async def set_topic_channel(self,
+                                channel: discord.TextChannel) -> None:
+        """Sets the topic channel for this guild.
+
+        Args:
+            channel (discord.TextChannel): The channel to set the topic channel to.
+        """
+
+        data.edit(self.guild_id, "music", channel.id, ["topic_id"])
+
+        self.topic_channel = channel
+        await self.update_topic(self.topic)
+
+        await channel.trigger_typing()
+        info_gui = ui_embed.topic_update(channel, self.topic_channel)
+        await info_gui.send()
+
+    async def clear_topic_channel(self,
+                                  channel: discord.TextChannel) -> None:
+        """Clears the topic channel for this guild.
+
+        Args:
+            channel (discord.TextChannel): The channel to send updates to.
+        """
+
+        try:
+            if self.topic_channel:
+                await self.topic_channel.edit(topic="")
+        except Exception as e:
+            logger.exception(e)
+
+        self.topic_channel = None
+        logger.debug("Clearing topic channel")
+
+        data.edit(self.guild_id, "music", "", ["topic_id"])
+
+        await channel.trigger_typing()
+        info_gui = ui_embed.topic_update(channel, self.topic_channel)
+        await info_gui.send()
 
     # Backend functions
     async def enqueue(self,

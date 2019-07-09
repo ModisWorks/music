@@ -58,7 +58,7 @@ async def on_command(root, aux, query, msgobj):
     elif root == 'stop':
         await _data.cache[guild.id].stop(log=True)
     elif root == 'volume':
-        await _data.cache[guild.id].setvolume(query)
+        await _data.cache[guild.id].volume(query)
     elif root == 'topic':
         topic_on = "on" in aux
         topic_off = "off" in aux
