@@ -2,11 +2,8 @@
 
 import typing
 import asyncio
-import json
 import logging
-import os
 import random
-import threading
 
 import discord
 import youtube_dl
@@ -30,9 +27,10 @@ options_ytdl = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0' # bind to ipv4 since ipv6 addresses cause issues sometimes
+    'source_address': '0.0.0.0',  # bind to ipv4 since ipv6 addresses cause issues sometimes
 }
 options_ffmpeg = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn'
 }
 
@@ -63,7 +61,7 @@ class MusicPlayer:
         self.queue: list = []
         self.history: list = []
         self.history_max: int = 500
-        self.volume: int = 20
+        self.volume: int = 10
         self.loop: str = "off"  # off/on/shuffle
 
         # Frontend vars
@@ -104,7 +102,7 @@ class MusicPlayer:
                    index: int = 0,
                    interrupt: bool = False,
                    shuffle: bool = False) -> None:
-        """The play command.
+        """Starts playback, or queues query if already playing.
 
         Args:
             voice_channel (discord.VoiceChannel): The member that called the command.
@@ -136,6 +134,142 @@ class MusicPlayer:
                 await self.voice_next()
                 pass
 
+    async def stop(self):
+        """Stops playback."""
+
+        self.state = "stopping"
+
+        await self.update_topic("Music player is stopped")
+        self.ui_loggers["nowplaying"].debug("---")
+        self.ui_loggers["author"].debug("---")
+        self.ui_loggers["source"].debug("---")
+        self.ui_loggers["status"].debug("Stopping")
+
+        self.ready_voice = False
+        self.loop = False
+
+        if self.voice_client:
+            try:
+                await self.voice_client.disconnect()
+            except discord.ClientException:
+                pass
+
+        self.voice_client = None
+        self.voice_channel = None
+        self.queue = []
+        self.history = []
+
+        self.update_queue()
+
+        self.ui_loggers["status"].debug("Stopped")
+
+        self.state = "off"
+
+    async def destroy(self):
+        """Destroys the GUI and music player."""
+
+        self.state = "destroying"
+
+        await self.update_topic("Music player is off")
+
+        self.ready_text = False
+        self.ready_voice = False
+        self.loop = "off"
+
+        if self.voice_client:
+            try:
+                await self.voice_client.disconnect()
+            except discord.ClientException:
+                pass
+
+        self.voice_client = None
+        self.voice_channel = None
+        self.queue = []
+        self.history = []
+
+        if self.embed:
+            await self.embed.delete()
+            self.embed = None
+
+        self.state = "off"
+
+    async def insert(self):
+        pass
+
+    async def pause(self) -> None:
+        """Pauses playback if playing."""
+
+        if not self.state == "ready":
+            return
+        if not self.voice_client:
+            return
+        if not self.voice_client.is_connected():
+            return
+        if not self.voice_client.is_playing():
+            return
+
+        self.voice_client.pause()
+        self.ui_loggers["status"].info("Paused")
+
+    async def resume(self) -> None:
+        """Resumes playback if paused."""
+
+        if not self.state == "ready":
+            return
+        if not self.voice_client.is_connected():
+            return
+        if self.voice_client.is_playing():
+            return
+
+        self.voice_client.resume()
+        self.ui_loggers["info"].info("Resumed")
+
+    async def toggle(self) -> None:
+        """Toggles between pause and resume."""
+
+        if not self.state == "ready":
+            return
+        if not self.voice_client.is_connected():
+            return
+
+        if self.voice_client.is_playing():
+            await self.pause()
+        else:
+            await self.resume()
+
+    async def skip(self,
+                   amount: str = "1") -> None:
+        """Skips a specified number of songs.
+
+        Args:
+            amount (str): The number of items to skip, can be a number or "all".
+        """
+
+        if not self.state == "ready":
+            return
+
+        if amount == "":
+            amount = "1"
+        elif amount == "all":
+            amount = str(len(self.queue) + 1)
+
+        try:
+            num = int(amount)
+        except TypeError or ValueError:
+            self.ui_loggers["status"].error("Skip amount must be a positive integer or \"all\"")
+            return
+
+        self.ui_loggers["status"].info("Skipping")
+
+        for i in range(num - 1):
+            if len(self.queue) > 0:
+                self.history.append(self.queue.pop(0))
+
+        try:
+            self.voice_client.stop()
+        except discord.ClientException:
+            pass
+
     # Backend functions
     async def enqueue(self,
                       query: str,
@@ -166,77 +300,6 @@ class MusicPlayer:
 
         self.update_queue()
 
-    async def voice_next(self) -> None:
-        """Starts playing the next song in the queue."""
-
-        # if self.state != "ready":
-        #     logger.error("Attempt to play song from wrong state ('{}'), must be 'ready'.".format(self.state))
-        #     return
-
-        self.state = "starting stream"
-
-        if self.voice_client.is_playing():
-            self.voice_client.stop()
-
-        # Queue empty
-        if not self.queue:
-            self.state = "ready"
-
-            if self.loop == "on":
-                self.ui_loggers["status"].info("Finished queue; looping")
-                self.queue = self.history
-            elif self.loop == "shuffle":
-                self.ui_loggers["status"].info("Finished queue; looping and shuffling")
-                self.queue = self.history
-                random.shuffle(self.queue)
-            else:
-                self.ui_loggers["status"].info("Finished queue")
-            self.history = []
-            self.update_queue()
-
-            if self.queue:
-                await self.voice_next()
-            else:
-                # TODO stop
-                pass
-            return
-
-        self.ui_loggers["nowplaying"].debug("---")
-        self.ui_loggers["author"].debug("---")
-        self.ui_loggers["source"].debug("---")
-        self.ui_loggers["status"].debug("Downloading next song")
-        self.ui_loggers["time"].debug("Loading song")
-
-        song_link = self.queue[0][0]
-        song_name = self.queue[0][1]
-
-        self.history.append(self.queue.pop(0))
-        while len(self.history) > self.history_max:
-            self.history.pop(0)
-
-        song_filename = ytdl.extract_info(song_link, download=False)
-        if "entries" in song_filename:
-            song_filename = song_filename["entries"][0]
-        song_filename = song_filename["url"]
-        source = discord.FFmpegPCMAudio(song_filename, **options_ffmpeg)
-        source = discord.PCMVolumeTransformer(source)
-        source.volume = self.volume/100
-
-        self.voice_client.play(source, after=lambda e: print(e) if e else lambda: self.voice_after())
-
-        await self.update_topic("Playing {}".format(song_name))
-
-    async def voice_after(self) -> None:
-        """Called after a song finishes playing."""
-
-        pass
-
-    async def voice_error(self,
-                          error: Exception) -> None:
-        """Called if there is an error while playing a song."""
-
-        pass
-
     # UI functions
     async def text_setup(self,
                          text_channel: discord.TextChannel) -> None:
@@ -260,12 +323,7 @@ class MusicPlayer:
         await self.text_channel.trigger_typing()
         self.embed = self.construct_embed()
         await self.embed.send()
-        self.ui_loggers["status"].info("Loading buttons")
-        for e in ("⏯", "⏮", "⏹", "⏭", "🔀", "🔉", "🔊"):
-            try:
-                await self.embed.sent_embed.add_reaction(e)
-            except discord.ClientException:
-                self.ui_loggers["status"].error("I couldn't add the buttons. Check my permissions.")
+        asyncio.ensure_future(self.add_reactions())
 
         self.ready_text = True
 
@@ -326,6 +384,16 @@ class MusicPlayer:
 
         return constructed_embed
 
+    async def add_reactions(self) -> None:
+        """Adds the reaction buttons to an embed UI."""
+
+        self.ui_loggers["status"].info("Loading buttons")
+        for e in ("⏯", "⏮", "⏹", "⏭", "🔀", "🔉", "🔊"):
+            try:
+                await self.embed.sent_embed.add_reaction(e)
+            except discord.ClientException:
+                self.ui_loggers["status"].error("I couldn't add the buttons. Check my permissions.")
+
     def update_queue(self) -> None:
         """Updates the queue display in the UI."""
 
@@ -366,9 +434,9 @@ class MusicPlayer:
             voice_channel (discord.VoiceChannel): The voice channel to connect to.
         """
 
-        if self.ready_voice:
-            logger.warning("Attempt to init voice when already init")
-            return
+        # if self.ready_voice:
+        #     logger.warning("Attempt to init voice when already init")
+        #     return
 
         # if self.state != "starting":
         #     logger.warning("Attempt to init voice from wrong state ("{}"); must be "starting".".format(self.state))
@@ -379,6 +447,7 @@ class MusicPlayer:
         # Connect to voice
         if self.voice_channel:
             self.ui_loggers["status"].info("Connecting to voice")
+
             try:
                 self.voice_client = await self.voice_channel.connect()
             except discord.ClientException:
@@ -392,6 +461,101 @@ class MusicPlayer:
         else:
             self.ui_loggers["status"].error("You're not connected to a voice channel.")
             return
+
+    async def voice_next(self) -> None:
+        """Starts playing the next song in the queue."""
+
+        # if self.state != "ready":
+        #     logger.error("Attempt to play song from wrong state ('{}'), must be 'ready'.".format(self.state))
+        #     return
+
+        # self.state = "starting stream"
+
+        if self.voice_client.is_playing():
+            self.voice_client.stop()
+
+        # Queue empty
+        if not self.queue:
+            self.state = "ready"
+
+            if self.loop == "on":
+                self.ui_loggers["status"].info("Finished queue; looping")
+                self.queue = self.history
+            elif self.loop == "shuffle":
+                self.ui_loggers["status"].info("Finished queue; looping and shuffling")
+                self.queue = self.history
+                random.shuffle(self.queue)
+            else:
+                self.ui_loggers["status"].info("Finished queue")
+            self.history = []
+            self.update_queue()
+
+            if self.queue:
+                await self.voice_next()
+            else:
+                # TODO stop
+                pass
+            return
+
+        self.ui_loggers["status"].debug("Downloading next song")
+
+        song_link = self.queue[0][0]
+        song_name = self.queue[0][1]
+
+        self.history.append(self.queue.pop(0))
+        while len(self.history) > self.history_max:
+            self.history.pop(0)
+
+        song_data = ytdl.extract_info(song_link, download=False)
+        if "entries" in song_data:
+            song_data = song_data["entries"][0]
+        source = discord.FFmpegPCMAudio(song_data["url"], **options_ffmpeg)
+        source = discord.PCMVolumeTransformer(source, volume=self.volume/100)
+
+        # UI updates
+        self.ui_loggers["nowplaying"].debug(song_name)
+        if "uploader" in song_data:
+            self.ui_loggers["author"].debug(song_data["uploader"])
+        else:
+            self.ui_loggers["author"].debug("Unknown")
+        self.ui_loggers["source"].debug(api_music.parse_source(song_data))
+        self.ui_loggers["time"].debug("TODO")
+        self.ui_loggers["status"].debug("Playing {}".format(song_name))
+        self.update_queue()
+        await self.update_topic("Playing {}".format(song_name))
+
+        # Start play
+        self.voice_client.play(source, after=lambda e: self.voice_after_ts(e))
+
+    def voice_after_ts(self,
+                       error: Exception) -> None:
+        """Called after a song finishes playing.
+
+        Args:
+            error (Exception): Exists if the playing stopped because of an error.
+        """
+
+        asyncio.run_coroutine_threadsafe(self.voice_after(error), main.client.loop).result()
+
+    async def voice_after(self,
+                          error: Exception) -> None:
+        """Called after a song finishes playing.
+
+        Args:
+            error (Exception): Exists if the playing stopped because of an error.
+        """
+
+        if error:
+            logger.exception(error)
+            self.ui_loggers["status"].debug("Music player encountered an error")
+
+            try:
+                self.voice_client.stop()
+            except discord.DiscordException:
+                pass
+
+        # self.state = "ready"
+        await self.voice_next()
 
     # Database functions
     def push_volume(self) -> None:
@@ -419,26 +583,6 @@ class MusicPlayer:
             self.topic_channel = main.client.get_channel(data.get(self.guild_id, "music", ["topic_channel_id"]))
         else:
             self.push_topic_channel()
-
-
-class AudioSource(discord.PCMVolumeTransformer):
-    """An audio source for the player that plays links through ytdl"""
-
-    def __init__(self, source, *, data, volume):
-        super().__init__(source, volume)
-        self.data = data
-        self.title = data.get("title")
-        self.url = data.get("url")
-
-    @classmethod
-    async def from_url(cls, url, loop: asyncio.AbstractEventLoop):
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=False))
-
-        if "entries" in data:
-            data = data["entries"][0]
-
-        filename = data["url"]
-        return cls(discord.FFmpegPCMAudio(filename, **options_ffmpeg), data=data)
 
 
 class EmbedLogHandler(logging.Handler):
