@@ -83,7 +83,9 @@ class MusicPlayer:
         # Status vars
         self.ready_text: bool = False
         self.ready_voice: bool = False
-        self.state: str = "off"  # off/starting/ready/starting stream
+        self.ready_player: bool = False
+        self.busy_player: bool = False
+        self.busy_streamer: bool = False
 
         # Initialise
         for key in self.ui_fields:
@@ -113,8 +115,8 @@ class MusicPlayer:
             shuffle (bool): Whether to shuffle the queue after starting.
         """
 
-        if self.state == "off":
-            self.state = "starting"
+        if not self.ready_player:
+            self.busy_player = True
 
             self.history = []
             await self.update_topic("The music player is starting")
@@ -123,11 +125,12 @@ class MusicPlayer:
             await self.voice_setup(voice_channel)
 
             if self.ready_text and self.ready_text:
-                self.state = "ready"
+                self.busy_player = False
+                self.ready_player = True
             else:
-                self.state = "off"
+                self.busy_player = False
 
-        if self.state == "ready":
+        if self.ready_player:
             await self.enqueue(query, index, shuffle)
 
             if not self.voice_client.is_playing() or interrupt:
@@ -137,7 +140,8 @@ class MusicPlayer:
     async def stop(self):
         """Stops playback."""
 
-        self.state = "stopping"
+        self.ready_player = False
+        self.busy_player = True
 
         await self.update_topic("Music player is stopped")
         self.ui_loggers["nowplaying"].debug("---")
@@ -163,12 +167,13 @@ class MusicPlayer:
 
         self.ui_loggers["status"].debug("Stopped")
 
-        self.state = "off"
+        self.busy_player = False
 
     async def destroy(self):
         """Destroys the GUI and music player."""
 
-        self.state = "destroying"
+        self.ready_player = False
+        self.busy_player = True
 
         await self.update_topic("Music player is off")
 
@@ -191,7 +196,7 @@ class MusicPlayer:
             await self.embed.delete()
             self.embed = None
 
-        self.state = "off"
+        self.busy_player = False
 
     async def insert(self):
         pass
@@ -199,7 +204,7 @@ class MusicPlayer:
     async def pause(self) -> None:
         """Pauses playback if playing."""
 
-        if not self.state == "ready":
+        if not self.ready_player:
             return
         if not self.voice_client:
             return
@@ -214,7 +219,7 @@ class MusicPlayer:
     async def resume(self) -> None:
         """Resumes playback if paused."""
 
-        if not self.state == "ready":
+        if not self.ready_player:
             return
         if not self.voice_client.is_connected():
             return
@@ -227,7 +232,7 @@ class MusicPlayer:
     async def toggle(self) -> None:
         """Toggles between pause and resume."""
 
-        if not self.state == "ready":
+        if not self.ready_player:
             return
         if not self.voice_client.is_connected():
             return
@@ -245,7 +250,7 @@ class MusicPlayer:
             amount (str): The number of items to skip, can be a number or "all".
         """
 
-        if not self.state == "ready":
+        if not self.ready_player:
             return
 
         if amount == "":
@@ -280,7 +285,7 @@ class MusicPlayer:
             index (int): The index to remove, can be either a number, a range in the form '##-##', or "all".
         """
 
-        if not self.state == "ready":
+        if not self.ready_player:
             return
 
         if not index:
@@ -341,7 +346,7 @@ class MusicPlayer:
             amount (str): The number of items to rewind
         """
 
-        if not self.state == "ready":
+        if not self.ready_player:
             return
 
         if amount == "":
@@ -377,7 +382,7 @@ class MusicPlayer:
     async def shuffle(self) -> None:
         """Shuffles the queue."""
 
-        if not self.state == "ready":
+        if not self.ready_player:
             return
 
         self.ui_loggers["status"].debug("Shuffling")
@@ -414,7 +419,7 @@ class MusicPlayer:
             value (str): The volume to change to, can be an integer from 0 to 100, or + or -.
         """
 
-        if self.state != "ready":
+        if not self.ready_player:
             return
 
         if value == '+':
@@ -460,7 +465,7 @@ class MusicPlayer:
 
         self.push_volume()
 
-    async def movehere(self,
+    async def movetext(self,
                        channel: discord.TextChannel) -> None:
         """Moves the embed message to a new channel; can also be used to move the musicplayer to the front.
 
@@ -484,7 +489,7 @@ class MusicPlayer:
             voice_channel (discord.VoiceChannel): The channel to move to.
         """
 
-        if self.state != "ready":
+        if not self.ready_player:
             return
 
         # Disconnect
@@ -495,11 +500,15 @@ class MusicPlayer:
                 logger.exception(e)
 
         # Reconnect
+        self.ready_player = False
+        self.busy_player = True
+
         self.ready_voice = False
-        self.state = 'starting'
         await self.voice_setup(voice_channel)
+
         if self.ready_voice:
-            self.state = 'ready'
+            self.busy_player = False
+            self.ready_player = True
             self.ui_loggers["status"].info("Moved to new channel")
 
             if self.voice_client:
@@ -751,7 +760,7 @@ class MusicPlayer:
 
         # Queue empty
         if not self.queue:
-            self.state = "ready"
+            self.ready_player = True
 
             if self.loop == "on":
                 self.ui_loggers["status"].info("Finished queue; looping")

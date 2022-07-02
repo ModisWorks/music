@@ -84,6 +84,6 @@ async def on_command(root, aux, query, msgobj):
     elif root == 'destroy':
         await _data.cache[guild.id].destroy()
     elif root == 'front' or root == 'movehere':
-        await _data.cache[guild.id].movehere(channel)
+        await _data.cache[guild.id].movetext(channel)
     elif root == 'reconnect' or root == 'movevoice':
         await _data.cache[guild.id].movevoice(author.voice.channel)
